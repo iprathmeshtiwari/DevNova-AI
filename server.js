@@ -58,7 +58,7 @@ function auth(req, res, next) {
 }
 
 // ---------- Auth ----------
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/login', limiter(15 * 60 * 1000, 5), async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password || password.length < 8) return res.status(400).json({ error: 'Enter your name, email and a password of at least 8 characters.' });
   if (db.users.some(u => u.email === email.toLowerCase())) return res.status(409).json({ error: 'An account with this email already exists.' });
