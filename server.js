@@ -58,7 +58,7 @@ function auth(req, res, next) {
 }
 
 // ---------- Auth ----------
-app.post('/api/auth/login', limiter(15 * 60 * 1000, 5), async (req, res) => {
+app.post('/api/auth/register', async (req, res) => {
   const { name, email, password } = req.body;
   if (!name || !email || !password || password.length < 8) return res.status(400).json({ error: 'Enter your name, email and a password of at least 8 characters.' });
   if (db.users.some(u => u.email === email.toLowerCase())) return res.status(409).json({ error: 'An account with this email already exists.' });
@@ -73,7 +73,7 @@ try {
 }
   res.json({ token: token(u), user: pub(u) });
 });
-app.post('/api/auth/login', limiter(15 * 60 * 1000, 5), (req, res) => {
+app.post('/api/auth/login', limiter(15 * 60 * 1000, 5), async (req, res) => {
   const id = (req.body.email || '').toLowerCase();
   const u = db.users.find(u => u.email === id || u.name.toLowerCase() === id);
   if (!u || !bcrypt.compareSync(req.body.password || '', u.hash)) return res.status(401).json({ error: 'Email or password is incorrect.' });
