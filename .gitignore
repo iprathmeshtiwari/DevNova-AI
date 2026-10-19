@@ -2,6 +2,7 @@
 # Environment secrets
 .env
 .env.*
+!.env.example
 
 # Dependencies
 node_modules/
@@ -12,4 +13,24 @@ node_modules/
 # Local files
 .DS_Store
 Thumbs.db
-      
+
+# Local environment configuration
+env
+.env
+.env.*
+!.env.example
+
+# Local application data and backups
+data.json
+*.backup
+*.bak      
+# Secrets and local configuration
+env
+.env
+.env.*
+!.env.example
+settings.yml
+searxng/settings.yml
+data.json
+*.backup
+*.bak

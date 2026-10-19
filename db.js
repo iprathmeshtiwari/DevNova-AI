@@ -11,6 +11,11 @@ const schema = new mongoose.Schema({
 const State = mongoose.model("State", schema);
 
 async function connectDB() {
+  if (!process.env.MONGODB_URI) {
+    const error = new Error("MONGODB_URI is missing from .env");
+    error.code = "MONGODB_URI_MISSING";
+    throw error;
+  }
   try {
     await mongoose.connect(process.env.MONGODB_URI, {
       serverSelectionTimeoutMS: 10000
@@ -18,8 +23,6 @@ async function connectDB() {
     console.log("MongoDB Atlas connected!");
   } catch (err) {
     console.error("MongoDB error:", err.name);
-    console.error("Message:", err.message);
-    console.dir(err.reason?.servers, { depth: 3 });
     throw err;
   }
 }
