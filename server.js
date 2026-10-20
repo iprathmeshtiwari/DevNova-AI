@@ -392,6 +392,19 @@ function isComplexQuestion(text = '') {
     (text.match(/\n/g) || []).length >= 5 ||
     /\b(debug|debugging|architecture|refactor|algorithm|compare|analyze|complex|step[- ]by[- ]step|security audit)\b/i.test(text);
 }
+function trimForEvaluation(value, maxLength) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const text = value.trim();
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return text.slice(0, maxLength) + '\n...[truncated]';
+}
 
 async function selectBestAnswer(question, nemotronAnswer, otherAnswer, signal, evaluatorProvider = 'gemini') {
   // Keep the evaluator request small: TPM accounting includes prompt tokens
