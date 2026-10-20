@@ -304,7 +304,7 @@ async function callAIProvider(provider, messages, signal) {
   const isGrok = provider === 'grok';
 
   const baseUrl = isGrok
-    ? (process.env.GROK_BASE_URL || 'https://api.x.ai/v1')
+    ? (process.env.GROK_BASE_URL || 'https://api.groq.com/openai/v1')
     : process.env.AI_BASE_URL;
 
   const apiKey = isGrok
