@@ -420,12 +420,16 @@ avoid presenting it as certain.`
   // Gemini (or the configured fallback provider) evaluates both answers.
 // If evaluation fails, retain Nemotron's answer as a fallback.
   try {
-    return await callAIProvider(evaluatorProvider, evaluationMessages, signal, {
-  maxTokens: 1200
-  } catch (error) {
-    console.warn('Answer evaluation failed:', error.message);
-    return nemotronAnswer;
-  }
+  return await callAIProvider(
+    evaluatorProvider,
+    evaluationMessages,
+    signal,
+    { maxTokens: 1200 }
+  );
+} catch (error) {
+  console.warn('Answer evaluation failed:', error.message);
+  return nemotronAnswer;
+}
 }
 
 
