@@ -298,26 +298,43 @@ res.json(pub(u));
 });
 
 
-async function callAIProvider(provider, messages, signal) {
+
+async function callAIProvider(provider, messages, signal, options = {}) {
   console.log(`[AI ROUTING] Provider called: ${provider}`);
 
-  const isGrok = provider === 'grok';
+  const configs = {
+    nemotron: {
+      baseUrl: process.env.AI_BASE_URL,
+      apiKey: process.env.AI_API_KEY,
+      model: process.env.AI_MODEL
+    },
+    grok: {
+      baseUrl: process.env.GROK_BASE_URL,
+      apiKey: process.env.GROK_API_KEY,
+      model: process.env.GROK_MODEL
+    },
+    gemini: {
+      baseUrl:
+        process.env.GEMINI_BASE_URL ||
+        'https://generativelanguage.googleapis.com/v1beta/openai/',
+      apiKey: process.env.GEMINI_API_KEY,
+      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash'
+    }
+  };
 
-  const baseUrl = isGrok
-    ? (process.env.GROK_BASE_URL || 'https://api.groq.com/openai/v1')
-    : process.env.AI_BASE_URL;
+  const config = configs[provider];
 
-  const apiKey = isGrok
-    ? process.env.GROK_API_KEY
-    : process.env.AI_API_KEY;
+  if (!config) {
+    throw new Error(`Unknown AI provider: ${provider}`);
+  }
 
-  const model = isGrok
-    ? process.env.GROK_MODEL
-    : process.env.AI_MODEL;
+  const { baseUrl, apiKey, model } = config;
 
-  if (!apiKey || !baseUrl || !model) {
+  if (!baseUrl || !apiKey || !model) {
     throw new Error(`${provider} configuration is missing.`);
   }
+
+  const isNemotron = provider === 'nemotron';
 
   const response = await fetch(
     `${baseUrl.replace(/\/+$/, '')}/chat/completions`,
@@ -331,11 +348,13 @@ async function callAIProvider(provider, messages, signal) {
       body: JSON.stringify({
         model,
         messages,
-        max_tokens: 1500,
+        max_tokens: Number.isInteger(options.maxTokens)
+          ? options.maxTokens
+          : 4096,
         stream: false,
-        ...(isGrok ? {} : {
-          chat_template_kwargs: { enable_thinking: false }
-        })
+        ...(isNemotron
+          ? { chat_template_kwargs: { enable_thinking: false } }
+          : {})
       })
     }
   );
@@ -350,14 +369,23 @@ async function callAIProvider(provider, messages, signal) {
     );
   }
 
-  const answer = data.choices?.[0]?.message?.content;
+  const choice = data.choices?.[0];
+  const answer = choice?.message?.content;
 
   if (typeof answer !== 'string' || !answer.trim()) {
-    throw new Error(`${provider} returned an empty answer.`);
+    console.error(`[${provider.toUpperCase()} DEBUG] Empty response`, {
+      model: data.model,
+      finish_reason: choice?.finish_reason,
+      hasChoices: Array.isArray(data.choices),
+      hasMessage: !!choice?.message
+    });
+
+    throw new Error(`${provider} returned an empty response.`);
   }
 
   return answer.trim();
 }
+
 
 function isComplexQuestion(text = '') {
   return text.length > 700 ||
@@ -365,7 +393,12 @@ function isComplexQuestion(text = '') {
     /\b(debug|debugging|architecture|refactor|algorithm|compare|analyze|complex|step[- ]by[- ]step|security audit)\b/i.test(text);
 }
 
-async function selectBestAnswer(question, nemotronAnswer, grokAnswer, signal) {
+async function selectBestAnswer(question, nemotronAnswer, otherAnswer, signal, evaluatorProvider = 'gemini') {
+  // Keep the evaluator request small: TPM accounting includes prompt tokens
+  // and the requested output budget. Only bounded answers are sent here.
+  const evaluationQuestion = trimForEvaluation(question, 1800);
+  const evaluationNemotron = trimForEvaluation(nemotronAnswer, 3200);
+  const evaluationOther = trimForEvaluation(otherAnswer, 3200);
   const evaluationMessages = [
     {
       role: 'system',
@@ -380,14 +413,15 @@ avoid presenting it as certain.`
     },
     {
       role: 'user',
-      content: `QUESTION:\n${question}\n\nNEMOTRON ANSWER:\n${nemotronAnswer}\n\nGROK ANSWER:\n${grokAnswer}`
+      content: `QUESTION:\n${question}\n\nNEMOTRON ANSWER:\n${nemotronAnswer}\n\nSECOND PROVIDER ANSWER:\n${otherAnswer}`
     }
   ];
 
-  // Grok evaluates the two candidate answers.
-  // If evaluation fails, retain Nemotron's answer as a fallback.
+  // Gemini (or the configured fallback provider) evaluates both answers.
+// If evaluation fails, retain Nemotron's answer as a fallback.
   try {
-    return await callAIProvider('grok', evaluationMessages, signal);
+    return await callAIProvider(evaluatorProvider, evaluationMessages, signal, {
+  maxTokens: 1200
   } catch (error) {
     console.warn('Answer evaluation failed:', error.message);
     return nemotronAnswer;
@@ -1188,44 +1222,59 @@ Ultimate objective: Make DevNova AI a dependable, accurate, secure, versatile, a
   const question = String(query || userMessage || '');
   let finalAnswer;
 
-  if (isComplexQuestion(question)) {
-    // Complex questions: Nemotron + Grok, then evaluate both answers.
-    const nemotronAnswer = await callAIProvider(
-      'nemotron',
+  
+if (isComplexQuestion(question)) {
+  // Complex tasks: Nemotron + Gemini, with Grok as backup.
+  const nemotronAnswer = await callAIProvider(
+    'nemotron',
+    messages,
+    ctrl.signal
+  );
+
+  let secondAnswer;
+  let evaluatorProvider = 'gemini';
+
+  try {
+    secondAnswer = await callAIProvider(
+      'gemini',
       messages,
       ctrl.signal
     );
-
-    let grokAnswer;
+  } catch (err) {
+    console.warn('Gemini failed; trying Grok:', err.message);
 
     try {
-      grokAnswer = await callAIProvider(
+      secondAnswer = await callAIProvider(
         'grok',
         messages,
         ctrl.signal
       );
-    } catch (err) {
-      console.error('Grok answer failed:', err.message);
+      evaluatorProvider = 'grok';
+    } catch (grokError) {
+      console.error('Grok fallback failed:', grokError.message);
     }
-
-    if (grokAnswer) {
-      finalAnswer = await selectBestAnswer(
-        question,
-        nemotronAnswer,
-        grokAnswer,
-        ctrl.signal
-      );
-    } else {
-      finalAnswer = nemotronAnswer;
-    }
-  } else {
-    // Simple questions: Nemotron only.
-    finalAnswer = await callAIProvider(
-      'nemotron',
-      messages,
-      ctrl.signal
-    );
   }
+
+  if (secondAnswer) {
+    finalAnswer = await selectBestAnswer(
+      question,
+      nemotronAnswer,
+      secondAnswer,
+      ctrl.signal,
+      evaluatorProvider
+    );
+  } else {
+    finalAnswer = nemotronAnswer;
+  }
+} else {
+  // Simple questions: Nemotron only.
+  finalAnswer = await callAIProvider(
+    'nemotron',
+    messages,
+    ctrl.signal
+  );
+}
+
 
   if (ctrl.signal.aborted) {
     const err = new Error('Request cancelled');
