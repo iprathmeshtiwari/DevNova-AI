@@ -302,25 +302,20 @@ res.json(pub(u));
 async function callAIProvider(provider, messages, signal, options = {}) {
   console.log(`[AI ROUTING] Provider called: ${provider}`);
 
-  const configs = {
-    nemotron: {
-      baseUrl: process.env.AI_BASE_URL,
-      apiKey: process.env.AI_API_KEY,
-      model: process.env.AI_MODEL
-    },
-    grok: {
-      baseUrl: process.env.GROK_BASE_URL,
-      apiKey: process.env.GROK_API_KEY,
-      model: process.env.GROK_MODEL
-    },
-    gemini: {
-      baseUrl:
-        process.env.GEMINI_BASE_URL ||
-        'https://generativelanguage.googleapis.com/v1beta/openai/',
-      apiKey: process.env.GEMINI_API_KEY,
-      model: process.env.GEMINI_MODEL || 'gemini-3.8-flash'
-    }
-  };
+ const configs = {
+  nemotron: {
+    baseUrl: process.env.AI_BASE_URL,
+    apiKey: process.env.AI_API_KEY,
+    model: process.env.AI_MODEL
+  },
+  gemini: {
+    baseUrl:
+      process.env.GEMINI_BASE_URL ||
+      'https://generativelanguage.googleapis.com/v1beta/openai/',
+    apiKey: process.env.GEMINI_API_KEY,
+    model: process.env.GEMINI_MODEL || 'gemini-3.8-flash'
+  }
+};
 
   const config = configs[provider];
 
@@ -406,12 +401,17 @@ function trimForEvaluation(value, maxLength) {
   return text.slice(0, maxLength) + '\n...[truncated]';
 }
 
-async function selectBestAnswer(question, nemotronAnswer, otherAnswer, signal, evaluatorProvider = 'gemini') {
-  // Keep the evaluator request small: TPM accounting includes prompt tokens
-  // and the requested output budget. Only bounded answers are sent here.
+async function selectBestAnswer(
+  question,
+  nemotronAnswer,
+  otherAnswer,
+  signal,
+  evaluatorProvider = 'gemini'
+) {
   const evaluationQuestion = trimForEvaluation(question, 1800);
   const evaluationNemotron = trimForEvaluation(nemotronAnswer, 3200);
   const evaluationOther = trimForEvaluation(otherAnswer, 3200);
+
   const evaluationMessages = [
     {
       role: 'system',
@@ -422,27 +422,38 @@ Use supplied web evidence when available. Do not assume either model
 is correct simply because of its identity.
 Return one polished final answer. Do not reveal internal reasoning
 or mention this evaluation process. If a claim is unsupported,
-avoid presenting it as certain.`
+avoid presenting it as certain.
+Preserve correct code, Markdown formatting, and language-specific
+fenced code blocks. Do not remove or corrupt code formatting.`
     },
     {
       role: 'user',
-      content: `QUESTION:\n${question}\n\nNEMOTRON ANSWER:\n${nemotronAnswer}\n\nSECOND PROVIDER ANSWER:\n${otherAnswer}`
+      content: `QUESTION:
+${evaluationQuestion}
+
+NEMOTRON ANSWER:
+${evaluationNemotron}
+
+GEMINI ANSWER:
+${evaluationOther}`
     }
   ];
 
-  // Gemini (or the configured fallback provider) evaluates both answers.
-// If evaluation fails, retain Nemotron's answer as a fallback.
   try {
-  return await callAIProvider(
-    evaluatorProvider,
-    evaluationMessages,
-    signal,
-    { maxTokens: 1200 }
-  );
-} catch (error) {
-  console.warn('Answer evaluation failed:', error.message);
-  return nemotronAnswer;
-}
+    return await callAIProvider(
+      evaluatorProvider,
+      evaluationMessages,
+      signal,
+      { maxTokens: 1200 }
+    );
+  } catch (error) {
+    console.warn(
+      'Gemini answer evaluation failed; using Nemotron answer:',
+      error.message
+    );
+
+    return nemotronAnswer;
+  }
 }
 
 
@@ -1241,44 +1252,35 @@ Ultimate objective: Make DevNova AI a dependable, accurate, secure, versatile, a
 
   
 if (isComplexQuestion(question)) {
-  // Complex tasks: Nemotron + Gemini, with Grok as backup.
+  // Complex questions: Nemotron + Gemini, evaluated by Gemini.
   const nemotronAnswer = await callAIProvider(
     'nemotron',
     messages,
     ctrl.signal
   );
 
-  let secondAnswer;
-  let evaluatorProvider = 'gemini';
+  let geminiAnswer;
 
   try {
-    secondAnswer = await callAIProvider(
+    geminiAnswer = await callAIProvider(
       'gemini',
       messages,
       ctrl.signal
     );
-  } catch (err) {
-    console.warn('Gemini failed; trying Grok:', err.message);
-
-    try {
-      secondAnswer = await callAIProvider(
-        'grok',
-        messages,
-        ctrl.signal
-      );
-      evaluatorProvider = 'grok';
-    } catch (grokError) {
-      console.error('Grok fallback failed:', grokError.message);
-    }
+  } catch (error) {
+    console.warn(
+      'Gemini failed; using Nemotron answer:',
+      error.message
+    );
   }
 
-  if (secondAnswer) {
+  if (geminiAnswer) {
     finalAnswer = await selectBestAnswer(
       question,
       nemotronAnswer,
-      secondAnswer,
+      geminiAnswer,
       ctrl.signal,
-      evaluatorProvider
+      'gemini'
     );
   } else {
     finalAnswer = nemotronAnswer;
