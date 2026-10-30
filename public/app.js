@@ -318,7 +318,7 @@ V.chat = () => `<div class="chat"><div class="chead"><b id="ct"></b><span class=
       <label class="speech-toggle"><input id="speakToggle" type="checkbox" ${S.speakResponses ? 'checked' : ''}> Speak replies</label>
     </div>
     <div class="voice-status-row"><div class="voice-status" id="voiceStatus" role="status" aria-live="polite">Voice input uses supported browser speech recognition; audio is not uploaded to DevNova.</div><button type="button" class="btn voice-cancel" data-voice-cancel hidden>Cancel listening</button></div>
-    <div class="compose-row"><input name="m" placeholder="Type your message…" autocomplete="off" aria-label="Message"><button class="go" id="sb" aria-label="Send">${ic('arrow')}</button></div>
+    <div class="compose-row"><textarea name="m" rows="1" placeholder="Type your message…" autocomplete="off" aria-label="Message" spellcheck="false" style="display:block;flex:1;min-width:0;min-height:38px;max-height:40vh;resize:none;overflow-y:auto;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;line-height:1.5;background:transparent;color:inherit;border:0;outline:none;padding:9px 0;"></textarea><button class="go" id="sb" aria-label="Send">${ic('arrow')}</button></div>
   </form></div>`;
   function animateWelcomeName() {
   const el = document.getElementById('welcomeName');
@@ -439,7 +439,7 @@ V.chat.after = () => {
   if (language) language.value = S.voiceLanguage;
   const toggle = $('#speakToggle');
   if (toggle) toggle.checked = S.speakResponses;
-  if (S.prefill) { const t = S.prefill; S.prefill = ''; if (S.auto) { S.auto = false; send(t); } else { const i = document.querySelector('[name=m]'); i.value = t; i.focus(); } }
+  if (S.prefill) { const t = S.prefill; S.prefill = ''; if (S.auto) { S.auto = false; send(t); } else { const i = document.querySelector('[name=m]'); i.value = t; resizeComposer(i); i.focus(); } }
 };
 
 V.history = async () => {
@@ -571,6 +571,32 @@ document.addEventListener('change', e => {
     if (!target.checked) { stopSpeech(); paintMsgs(); }
   }
 });
+function resizeComposer(input) {
+  if (!input || input.tagName !== 'TEXTAREA') return;
+  input.style.height = 'auto';
+  const maxHeight = Math.round(window.innerHeight * 0.4);
+  input.style.height = `${Math.min(input.scrollHeight, maxHeight)}px`;
+  input.style.overflowY = input.scrollHeight > maxHeight ? 'auto' : 'hidden';
+}
+
+// Preserve pasted line breaks and indentation; grow the composer as text is entered.
+document.addEventListener('input', e => {
+  if (e.target.matches('textarea[name="m"]')) resizeComposer(e.target);
+});
+document.addEventListener('paste', e => {
+  if (e.target.matches('textarea[name="m"]')) {
+    // Let the browser insert clipboard text normally, then measure its new height.
+    requestAnimationFrame(() => resizeComposer(e.target));
+  }
+});
+document.addEventListener('keydown', e => {
+  if (!e.target.matches('textarea[name="m"]') || e.isComposing) return;
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!S.busy) e.target.form?.requestSubmit();
+  }
+});
+
 document.addEventListener('submit', async e => {
   e.preventDefault(); const f = e.target, v = Object.fromEntries(new FormData(f));
   try {
@@ -582,6 +608,7 @@ document.addEventListener('submit', async e => {
       abortRecognition(false);
       const input = f.elements.m, files = S.attachments.slice(), kinds = S.attachmentKinds.slice(), text = String(v.m || '');
       input.value = '';
+      resizeComposer(input);
       send(text, false, files, kinds);
     }
     else if (f.dataset.save !== undefined) { S.user = await api('/me', { method: 'PATCH', body: { name: v.name, email: v.email, twofa: !!v.twofa } }); toast('Changes saved'); render(); }
